@@ -158,8 +158,8 @@ int error_output(const char *arg, ...) {
     va_end(ap);
     return res;
 }
-
 void error_handling(const std::string &message) {
+
     std::cerr << message << std::endl;
     exit(1);
 }

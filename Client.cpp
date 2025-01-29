@@ -1,11 +1,10 @@
 #include <iostream>
 #include <string>
-
 #include <thread>
 #include <mutex>
 #include <cstdlib>
 #include <cstring>
-
+#include <fstream>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -17,15 +16,14 @@
 
 void send_msg(int sock);
 void recv_msg(int sock);
-
+void send_file(int sock);
+void recv_file(int sock);
 int output(const char *arg, ...);
 int error_output(const char *arg, ...);
-
 void error_handling(const std::string &message);
 
 std::string name = "DEFAULT";
 std::string msg;
-
 
 int main(int argc, const char **argv, const char **envp) {
     int sock;
@@ -41,7 +39,6 @@ int main(int argc, const char **argv, const char **envp) {
 
     sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == -1) {
-
         error_handling("socket() failed!");
     }
 
@@ -74,9 +71,13 @@ void send_msg(int sock) {
         if (msg == "Quit" || msg == "quit") {
             close(sock);
             exit(0);
+        } else if (msg.rfind("send_file", 0) == 0) {
+            // Command for sending file
+            send_file(sock);
+        } else {
+            std::string name_msg = name + " " + msg;
+            send(sock, name_msg.c_str(), name_msg.length() + 1, 0);
         }
-        std::string name_msg = name + " " + msg;
-        send(sock, name_msg.c_str(), name_msg.length() + 1, 0);
     }
 }
 
@@ -87,9 +88,62 @@ void recv_msg(int sock) {
         if (str_len == -1) {
             exit(-1);
         }
-        std::cout << std::string(name_msg) << std::endl;
-
+        
+        // Check if the server is sending a file
+        std::string message = std::string(name_msg);
+        if (message.rfind("send_file", 0) == 0) {
+            recv_file(sock);
+        } else {
+            std::cout << message << std::endl;
+        }
     }
+}
+
+void send_file(int sock) {
+    std::string filename;
+    std::cout << "Enter the filename to send: ";
+    std::cin >> filename;
+
+    // Send the file request
+    std::string file_request = "send_file " + filename;
+    send(sock, file_request.c_str(), file_request.length() + 1, 0);
+
+    // Open the file
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cout << "File could not be opened.\n";
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    while (file.read(buffer, BUF_SIZE) || file.gcount() > 0) {
+        send(sock, buffer, file.gcount(), 0);
+    }
+
+    std::cout << "File sent successfully.\n";
+    file.close();
+}
+
+void recv_file(int sock) {
+    std::string filename = "received_file";
+    std::ofstream file(filename, std::ios::binary);
+
+    if (!file) {
+        std::cerr << "[Error] Failed to create file\n";
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    int bytes_received;
+    while ((bytes_received = recv(sock, buffer, BUF_SIZE, 0)) > 0) {
+        file.write(buffer, bytes_received);
+        if (bytes_received < BUF_SIZE) {
+            break;  // End of file
+        }
+    }
+
+    file.close();
+    std::cout << "File received successfully: " << filename << std::endl;
 }
 
 int output(const char *arg, ...) {

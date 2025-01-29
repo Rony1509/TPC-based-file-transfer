@@ -72,7 +72,7 @@ void send_msg(int sock) {
             close(sock);
             exit(0);
         } else if (msg.rfind("send_file", 0) == 0) {
-            // Command for sending file
+            
             send_file(sock);
         } else {
             std::string name_msg = name + " " + msg;
@@ -89,7 +89,7 @@ void recv_msg(int sock) {
             exit(-1);
         }
         
-        // Check if the server is sending a file
+        
         std::string message = std::string(name_msg);
         if (message.rfind("send_file", 0) == 0) {
             recv_file(sock);
@@ -104,11 +104,11 @@ void send_file(int sock) {
     std::cout << "Enter the filename to send: ";
     std::cin >> filename;
 
-    // Send the file request
+    
     std::string file_request = "send_file " + filename;
     send(sock, file_request.c_str(), file_request.length() + 1, 0);
 
-    // Open the file
+    
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         std::cout << "File could not be opened.\n";

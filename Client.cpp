@@ -1,171 +1,195 @@
+#include <SFML/Graphics.hpp>
+#include <boost/asio.hpp>
 #include <iostream>
-#include <string>
-#include <thread>
-#include <mutex>
-#include <cstdlib>
-#include <cstring>
 #include <fstream>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <stdarg.h>
+#include <thread>
 
-#define BUF_SIZE 1024
-#define SERVER_PORT 5208
-#define IP "127.0.0.1"
+using boost::asio::ip::tcp;
 
-void send_msg(int sock);
-void recv_msg(int sock);
-void send_file(int sock);
-void recv_file(int sock);
-int output(const char *arg, ...);
-int error_output(const char *arg, ...);
-void error_handling(const std::string &message);
+// it will set progressbar
+void sendFileWithProgress(tcp::socket& socket, const std::string& filename, sf::RenderWindow& window, sf::Font& font) {
 
-std::string name = "DEFAULT";
-std::string msg;
+    // Progress Bar making
 
-int main(int argc, const char **argv, const char **envp) {
-    int sock;
-    struct sockaddr_in serv_addr;
+    sf::RectangleShape progressBar(sf::Vector2f(400, 30));
+    progressBar.setFillColor(sf::Color::Green);
+    progressBar.setPosition(50, 80);
 
-    if (argc != 2) {
-        error_output("Usage : %s <Name> \n", argv[0]);
-        exit(1);
+    sf::RectangleShape progressBarBackground(sf::Vector2f(400, 30));
+    progressBarBackground.setFillColor(sf::Color(100, 100, 100));
+    progressBarBackground.setPosition(50, 80);
+
+    // Progress Text
+
+    sf::Text progressText("0%", font, 20);
+    progressText.setPosition(230, 120);
+    progressText.setFillColor(sf::Color::White);
+
+    // it will take file name
+
+    boost::asio::write(socket, boost::asio::buffer(filename + "\n"));
+
+    // reading file
+
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return;
     }
 
-    name = "[" + std::string(argv[1]) + "]";
+    // file size
 
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
 
-    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == -1) {
-        error_handling("socket() failed!");
+    // give file size
+
+    boost::asio::write(socket, boost::asio::buffer(&file_size, sizeof(file_size)));
+
+    // Reset progress bar 
+    size_t bytes_sent = 0;
+    progressBar.setSize(sf::Vector2f(0, 30));  
+    progressText.setString("0%");
+
+    // Send file in chunks
+
+    char buffer[4096];
+    while (file.read(buffer, sizeof(buffer))) {
+        boost::asio::write(socket, boost::asio::buffer(buffer, file.gcount()));
+        bytes_sent += file.gcount();
+
+        // Update progress
+        float progress = static_cast<float>(bytes_sent) / file_size;
+        progressBar.setSize(sf::Vector2f(400 * progress, 30));
+        progressText.setString(std::to_string(static_cast<int>(progress * 100)) + "%");
+
+        // Update window
+        window.clear();
+        window.draw(progressBarBackground);
+        window.draw(progressBar);
+        window.draw(progressText);
+        window.display();
     }
 
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr(IP);
-    serv_addr.sin_port = htons(SERVER_PORT);
-
-    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == -1) {
-        error_handling("connect() failed!");
+    // Send remaining bytes (if any)
+    if (file.gcount() > 0) {
+        boost::asio::write(socket, boost::asio::buffer(buffer, file.gcount()));
+        bytes_sent += file.gcount();
     }
 
-    std::string my_name = "#new client:" + std::string(argv[1]);
-    send(sock, my_name.c_str(), my_name.length() + 1, 0);
+    // Final progress 
 
-    std::thread snd(send_msg, sock);
-    std::thread rcv(recv_msg, sock);
+    float final_progress = static_cast<float>(bytes_sent) / file_size;
+    progressBar.setSize(sf::Vector2f(400 * final_progress, 30));
+    progressText.setString("100%");
 
-    snd.join();
-    rcv.join();
+    // Final update to show 100%
 
-    close(sock);
+    window.clear();
+    window.draw(progressBarBackground);
+    window.draw(progressBar);
+    window.draw(progressText);
+    window.display();
+
+    std::cout << "File transfer complete: " << filename << "\n";
+}
+
+int main() {
+    std::string server_address, port;
+    std::cout << "Enter server address: ";
+    std::cin >> server_address;
+    std::cout << "Enter server port: ";
+    std::cin >> port;
+
+    // SFML Window
+
+    sf::RenderWindow window(sf::VideoMode(500, 400), "File Transfer");
+
+    // open front
+
+    sf::Font font;
+    if (!font.loadFromFile("arial.ttf")) {
+        std::cerr << "Error loading font\n";
+        return 1;
+    }
+
+    
+    sf::Text fileNameText("Enter file name:", font, 20);
+
+    fileNameText.setPosition(50, 20);
+    fileNameText.setFillColor(sf::Color::White);
+
+    sf::RectangleShape inputBox(sf::Vector2f(300, 30));
+    inputBox.setFillColor(sf::Color(200, 200, 200));
+    inputBox.setPosition(150, 20);
+
+    sf::Text inputText("", font, 20);
+    inputText.setPosition(160, 25);
+    inputText.setFillColor(sf::Color::Black);
+
+    // Create Send Button f
+    sf::RectangleShape sendButton(sf::Vector2f(100, 40));
+    sendButton.setFillColor(sf::Color::Blue);
+    sendButton.setPosition(200, 70);
+
+    sf::Text sendButtonText("Send", font, 20);
+    sendButtonText.setPosition(225, 80);
+    sendButtonText.setFillColor(sf::Color::White);
+
+    try {
+        boost::asio::io_service io_service;
+        tcp::resolver resolver(io_service);
+        tcp::resolver::query query(server_address, port);
+        tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
+        tcp::socket socket(io_service);
+        boost::asio::connect(socket, endpoint_iterator);
+
+        while (window.isOpen()) {
+            sf::Event event;
+            while (window.pollEvent(event)) {
+                if (event.type == sf::Event::Closed)
+                    window.close();
+
+                // file name input
+
+                if (event.type == sf::Event::TextEntered) {
+                    if (event.text.unicode < 128 && event.text.unicode != 13) { // Check for enter key (13)
+                        inputText.setString(inputText.getString() + static_cast<char>(event.text.unicode));
+                    }
+                    if (event.text.unicode == 8) { 
+                        std::string currentText = inputText.getString();
+                        if (!currentText.empty()) {
+                            currentText.pop_back();
+                            inputText.setString(currentText);
+                        }
+                    }
+                }
+
+                // click button
+                
+                if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+                    if (sendButton.getGlobalBounds().contains(event.mouseButton.x, event.mouseButton.y)) {
+                        std::string filename = inputText.getString();
+                        if (!filename.empty()) {
+                            sendFileWithProgress(socket, filename, window, font);
+                            inputText.setString("");  // Clear input for next file
+                        }
+                    }
+                }
+            }
+
+            window.clear();
+            window.draw(fileNameText);
+            window.draw(inputBox);
+            window.draw(inputText);
+            window.draw(sendButton);
+            window.draw(sendButtonText);
+            window.display();
+        }
+    } catch (std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
 
     return 0;
 }
-
-void send_msg(int sock) {
-    while (1) {
-        getline(std::cin, msg);
-        if (msg == "Quit" || msg == "quit") {
-            close(sock);
-            exit(0);
-        } else if (msg.rfind("send_file", 0) == 0) {
-            
-            send_file(sock);
-        } else {
-            std::string name_msg = name + " " + msg;
-            send(sock, name_msg.c_str(), name_msg.length() + 1, 0);
-        }
-    }
-}
-
-void recv_msg(int sock) {
-    char name_msg[BUF_SIZE + name.length() + 1];
-    while (1) {
-        int str_len = recv(sock, name_msg, BUF_SIZE + name.length() + 1, 0);
-        if (str_len == -1) {
-            exit(-1);
-        }
-        
-        
-        std::string message = std::string(name_msg);
-        if (message.rfind("send_file", 0) == 0) {
-            recv_file(sock);
-        } else {
-            std::cout << message << std::endl;
-        }
-    }
-}
-
-void send_file(int sock) {
-    std::string filename;
-    std::cout << "Enter the filename to send: ";
-    std::cin >> filename;
-
-    
-    std::string file_request = "send_file " + filename;
-    send(sock, file_request.c_str(), file_request.length() + 1, 0);
-
-    
-    std::ifstream file(filename, std::ios::binary);
-    if (!file) {
-        std::cout << "File could not be opened.\n";
-        return;
-    }
-
-    char buffer[BUF_SIZE];
-    while (file.read(buffer, BUF_SIZE) || file.gcount() > 0) {
-        send(sock, buffer, file.gcount(), 0);
-    }
-
-    std::cout << "File sent successfully.\n";
-    file.close();
-}
-
-void recv_file(int sock) {
-    std::string filename = "received_file";
-    std::ofstream file(filename, std::ios::binary);
-
-    if (!file) {
-        std::cerr << "[Error] Failed to create file\n";
-        return;
-    }
-
-    char buffer[BUF_SIZE];
-    int bytes_received;
-    while ((bytes_received = recv(sock, buffer, BUF_SIZE, 0)) > 0) {
-        file.write(buffer, bytes_received);
-        if (bytes_received < BUF_SIZE) {
-            break;  // End of file
-        }
-    }
-
-    file.close();
-    std::cout << "File received successfully: " << filename << std::endl;
-}
-
-int output(const char *arg, ...) {
-    int res;
-    va_list ap;
-    va_start(ap, arg);
-    res = vfprintf(stdout, arg, ap);
-    va_end(ap);
-    return res;
-}
-
-int error_output(const char *arg, ...) {
-    int res;
-    va_list ap;
-    va_start(ap, arg);
-    res = vfprintf(stderr, arg, ap);
-    va_end(ap);
-    return res;
-}
-
-void error_handling(const std::string &message) {
-    std::cerr << message << std::endl;
-    exit(1);
-}
-
